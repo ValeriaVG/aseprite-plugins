@@ -1,0 +1,20 @@
+{
+  "name": "isometrify",
+  "displayName": "Isometrify",
+  "version": "0.2.0",
+  "description": "Project a flat pixel-art selection onto a 2:1 isometric wall with one click (lossless pixel shear).",
+  "author": {
+    "name": "valeria"
+  },
+  "license": "MIT",
+  "categories": [
+    "Scripts"
+  ],
+  "contributes": {
+    "scripts": [
+      {
+        "path": "./isometrify.lua"
+      }
+    ]
+  }
+}
