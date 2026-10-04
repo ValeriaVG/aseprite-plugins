@@ -130,8 +130,8 @@ P("app.transaction(fn)", function() app.transaction(function() end) return "ok" 
 P("app.refresh()", function() app.refresh() return "ok" end)
 
 print("== saveAs ==")
-P("spr:saveAs docs/probe.png", function()
-  spr:saveAs("/Users/valeria/git/aseprite-plugins/isometrify/docs/probe.png")
+P("spr:saveAs ../docs/probe.png", function()
+  spr:saveAs("../docs/probe.png")   -- relative to isometrify/test
   return "saved"
 end)
 

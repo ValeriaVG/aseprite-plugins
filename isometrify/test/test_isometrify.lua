@@ -3,29 +3,31 @@
 --   cd <repo>/isometrify/test
 --   <path-to-aseprite> -b -script test_isometrify.lua
 --
--- Loads ../isometrify.lua as a library (no dialog) and checks:
+-- Loads ../isometrify.lua as a library and checks:
 --   * the shear math (staircases, mirroring, no-op widths)
 --   * the floor projection (full-coverage diamond: 1:1 pixel moves
 --     with a solid copied outline, cube-proportioned)
 --   * exact reversibility (round trips)
 --   * the sprite plumbing (region extraction, cel replacement,
---     canvas growth, selection update, failure paths)
+--     canvas growth, selection update, failure paths, context
+--     defaults)
 -- Also renders docs/example_flat.png, docs/example_wall.png,
 -- docs/example_floor.png and docs/example_cube.png.
 
 local function load_plugin()
   for _, path in ipairs({
-    "../isometrify.lua",
-    "isometrify.lua",
-    "/Users/valeria/git/aseprite-plugins/isometrify/isometrify.lua",
+    "../isometrify.lua",                 -- run from isometrify/test
+    "isometrify.lua",                    -- run from isometrify/
+    "../../isometrify/isometrify.lua",   -- run from the repo root
   }) do
     local chunk = loadfile(path)
-    if chunk then return chunk() end
+    if chunk then return chunk(), path end
   end
-  error("test: could not load isometrify.lua")
+  error("test: could not load isometrify.lua (run me from isometrify/test)")
 end
 
-local M = load_plugin()
+local M, PLUGIN_PATH = load_plugin()
+local DOCS = PLUGIN_PATH:gsub("isometrify%.lua$", "docs")
 
 local pc = app.pixelColor
 local A = pc.rgba(255, 0, 0, 255)
@@ -53,6 +55,15 @@ local function solid(w, h, value)
     end
   end
   return img
+end
+
+-- paint a solid block onto an image
+local function block(img, x, y, w, h, value)
+  for yy = y, y + h - 1 do
+    for xx = x, x + w - 1 do
+      img:putPixel(xx, yy, value)
+    end
+  end
 end
 
 local MAP = { A = A, B = B, C = C, D = D, ["."] = T }
@@ -178,12 +189,22 @@ end
 
 print("== sprite plumbing ==")
 
--- fresh sprite whose layer-1 cel is a solid block at (celx, cely)
-local function make_sprite(w, h, celw, celh, celx, cely, value)
-  local spr = Sprite(w, h)
+-- fresh sprite whose layer-1 cel is `img` placed at (x, y)
+local function cel_sprite(img, x, y, canvas_w, canvas_h)
+  local spr = Sprite(canvas_w, canvas_h)
   local cel = spr.layers[1]:cel(1)
-  cel.image = solid(celw, celh, value)
-  cel.position = Point(celx, cely)
+  cel.image = img
+  cel.position = Point(x, y)
+  return spr, cel
+end
+
+-- 16x16 sprite, 8x8 cel at (2, 3): solid B carrying a 4x4 A block at
+-- local (2, 2), with selection (4, 5, 4, 4) over the block
+local function two_tone()
+  local img = solid(8, 8, B)
+  block(img, 2, 2, 4, 4, A)
+  local spr, cel = cel_sprite(img, 2, 3, 16, 16)
+  spr.selection = Selection(Rectangle(4, 5, 4, 4))
   return spr, cel
 end
 
@@ -191,17 +212,7 @@ end
 -- drawImage composites (alpha blend), so transparent cells of the sheared
 -- result keep existing art underneath; opaque cells overwrite.
 do
-  local spr = Sprite(16, 16)
-  local cel = spr.layers[1]:cel(1)
-  local img = solid(8, 8, B)
-  for y = 2, 5 do
-    for x = 2, 5 do
-      img:putPixel(x, y, A)
-    end
-  end
-  cel.image = img
-  cel.position = Point(2, 3)
-  spr.selection = Selection(Rectangle(4, 5, 4, 4))
+  local spr, cel = two_tone()
   local ok, msg = M.apply({ direction = "dr", sprite = spr, frame = 1 })
   report("apply(dr) on a selection returns true", ok == true, msg)
 
@@ -229,7 +240,7 @@ end
 
 -- whole-cel transform grows the canvas
 do
-  local spr, cel = make_sprite(10, 10, 10, 10, 0, 0, B)
+  local spr, cel = cel_sprite(solid(10, 10, B), 0, 0, 10, 10)
   local ok, msg = M.apply({ direction = "dr", sprite = spr, frame = 1 })
   report("apply(dr) whole cel returns true", ok == true, msg)
   report("apply(dr) whole cel: canvas grew to fit the wall",
@@ -245,17 +256,7 @@ end
 
 -- mirrored wall through the sprite path (same two-tone cel)
 do
-  local spr = Sprite(16, 16)
-  local cel = spr.layers[1]:cel(1)
-  local img = solid(8, 8, B)
-  for y = 2, 5 do
-    for x = 2, 5 do
-      img:putPixel(x, y, A)
-    end
-  end
-  cel.image = img
-  cel.position = Point(2, 3)
-  spr.selection = Selection(Rectangle(4, 5, 4, 4))
+  local spr, cel = two_tone()
   local ok = M.apply({ direction = "ur", sprite = spr, frame = 1 })
   report("apply(ur) on a selection returns true", ok == true)
   expect("apply(ur) selection: mirrored cel layout and pixels", {
@@ -272,17 +273,7 @@ end
 
 -- floor through the sprite path: the diamond now fits inside the cel
 do
-  local spr = Sprite(16, 16)
-  local cel = spr.layers[1]:cel(1)
-  local img = solid(8, 8, B)
-  for y = 2, 5 do
-    for x = 2, 5 do
-      img:putPixel(x, y, A)
-    end
-  end
-  cel.image = img
-  cel.position = Point(2, 3)
-  spr.selection = Selection(Rectangle(4, 5, 4, 4))
+  local spr, cel = two_tone()
   local ok, msg = M.apply({ direction = "floor", sprite = spr, frame = 1 })
   report("apply(floor) on a selection returns true", ok == true, msg)
 
@@ -308,7 +299,7 @@ end
 
 -- reverse through the sprite path undoes a forward pass
 do
-  local spr, cel = make_sprite(20, 20, 8, 8, 4, 4, A)
+  local spr, cel = cel_sprite(solid(8, 8, A), 4, 4, 20, 20)
   spr.selection = Selection(Rectangle(4, 4, 8, 8))
   local ok1 = M.apply({ direction = "dr", sprite = spr, frame = 1 })
   local fwd_h = cel.bounds.height          -- 8 + floor(7/2) = 11
@@ -326,7 +317,7 @@ end
 
 -- graceful failure when the selection misses the layer
 do
-  local spr = make_sprite(12, 12, 4, 4, 0, 0, A)
+  local spr = cel_sprite(solid(4, 4, A), 0, 0, 12, 12)
   spr.selection = Selection(Rectangle(8, 8, 4, 4))
   local ok, msg = M.apply({ direction = "dr", sprite = spr, frame = 1 })
   report("apply fails cleanly when the selection misses the cel",
@@ -339,16 +330,9 @@ end
 --   cel 8x8 (transparent), 4x4 block at local (2,2), cel at (4,4)
 --   selection = the whole cel -- bigger than the block
 do
-  local spr = Sprite(16, 16)
-  local cel = spr.layers[1]:cel(1)
   local img = Image(8, 8, ColorMode.RGBA)
-  for y = 2, 5 do
-    for x = 2, 5 do
-      img:putPixel(x, y, A)
-    end
-  end
-  cel.image = img
-  cel.position = Point(4, 4)
+  block(img, 2, 2, 4, 4, A)
+  local spr, cel = cel_sprite(img, 4, 4, 16, 16)
   spr.selection = Selection(Rectangle(4, 4, 8, 8))
   local ok, msg = M.apply({ direction = "dr", sprite = spr, frame = 1 })
   report("apply(dr) with margin: returns true", ok == true, msg)
@@ -378,16 +362,9 @@ end
 --
 --   cel 8x8 (transparent), 3x3 block at local (4,4), cel at (4,4)
 do
-  local spr = Sprite(20, 20)
-  local cel = spr.layers[1]:cel(1)
   local img = Image(8, 8, ColorMode.RGBA)
-  for y = 4, 6 do
-    for x = 4, 6 do
-      img:putPixel(x, y, A)
-    end
-  end
-  cel.image = img
-  cel.position = Point(4, 4)
+  block(img, 4, 4, 3, 3, A)
+  local spr, cel = cel_sprite(img, 4, 4, 20, 20)
   local ok, msg = M.apply({ direction = "dr", sprite = spr, frame = 1 })
   report("apply(dr) whole cel with margin: returns true", ok == true, msg)
 
@@ -413,20 +390,24 @@ end
 
 -- a selection that only covers empty pixels fails cleanly
 do
-  local spr = Sprite(16, 16)
-  local cel = spr.layers[1]:cel(1)
   local img = Image(8, 8, ColorMode.RGBA)
-  for y = 0, 7 do
-    for x = 0, 3 do
-      img:putPixel(x, y, A)     -- art only on the left half
-    end
-  end
-  cel.image = img
-  cel.position = Point(4, 4)
+  block(img, 0, 0, 4, 8, A)     -- art only on the left half
+  local spr = cel_sprite(img, 4, 4, 16, 16)
   spr.selection = Selection(Rectangle(10, 4, 2, 8))   -- empty half
   local ok, msg = M.apply({ direction = "dr", sprite = spr, frame = 1 })
   report("apply fails cleanly when the selection holds no pixels",
     ok == false and msg ~= nil)
+end
+
+-- apply() with pure context defaults: no sprite/layer/frame overrides,
+-- the path the one-click commands take
+do
+  local spr = two_tone()
+  local ok, msg = M.apply({ direction = "dr" })
+  local sb = spr.selection.bounds
+  report("apply(dr) with context defaults works (no overrides)",
+    ok == true and sb.width == 4 and sb.height == 5,
+    (ok == false and msg or tostring(sb)))
 end
 
 -- --------------------------------------------------------------- examples
@@ -435,41 +416,25 @@ print("== example render ==")
 
 local function example_art()
   local img = Image(22, 16, ColorMode.RGBA)
-  for x = 0, 21 do          -- horizontal red stripe
-    img:putPixel(x, 4, A)
-    img:putPixel(x, 5, A)
-  end
-  for y = 0, 15 do          -- vertical blue stripe
-    img:putPixel(6, y, B)
-    img:putPixel(7, y, B)
-  end
-  for y = 9, 13 do          -- green block
-    for x = 13, 17 do
-      img:putPixel(x, y, C)
-    end
-  end
+  block(img, 0, 4, 22, 2, A)    -- horizontal red stripe
+  block(img, 6, 0, 2, 16, B)    -- vertical blue stripe
+  block(img, 13, 9, 5, 5, C)    -- green block
   return img
 end
 
 do
-  local spr = Sprite(28, 26)
-  local cel = spr.layers[1]:cel(1)
-  cel.image = example_art()
-  cel.position = Point(2, 2)
-  spr:saveAs("/Users/valeria/git/aseprite-plugins/isometrify/docs/example_flat.png")
+  local spr = cel_sprite(example_art(), 2, 2, 28, 26)
+  spr:saveAs(DOCS .. "/example_flat.png")
   M.apply({ direction = "dr", sprite = spr, frame = 1 })
-  spr:saveAs("/Users/valeria/git/aseprite-plugins/isometrify/docs/example_wall.png")
+  spr:saveAs(DOCS .. "/example_wall.png")
   report("example PNGs rendered (flat + wall)",
     spr.height == 28, "sprite height " .. spr.height)
 end
 
 do
-  local spr = Sprite(28, 26)
-  local cel = spr.layers[1]:cel(1)
-  cel.image = example_art()
-  cel.position = Point(2, 2)
+  local spr = cel_sprite(example_art(), 2, 2, 28, 26)
   M.apply({ direction = "floor", sprite = spr, frame = 1 })
-  spr:saveAs("/Users/valeria/git/aseprite-plugins/isometrify/docs/example_floor.png")
+  spr:saveAs(DOCS .. "/example_floor.png")
   report("example PNG rendered (floor)",
     spr.width == 40 and spr.height == 26,
     "sprite is " .. spr.width .. "x" .. spr.height)
@@ -479,12 +444,10 @@ end
 do
   local S = 16
   local img = Image(S, S, ColorMode.RGBA)
-  for y = 0, S - 1 do
-    for x = 0, S - 1 do
-      img:putPixel(x, y,
-        (y < S/2) and ((x < S/2) and A or B) or ((x < S/2) and C or D))
-    end
-  end
+  block(img, 0, 0, S/2, S/2, A)
+  block(img, S/2, 0, S/2, S/2, B)
+  block(img, 0, S/2, S/2, S/2, C)
+  block(img, S/2, S/2, S/2, S/2, D)
   local F = M.transform(img, "floor", false)
   local Wl = M.transform(img, "dr", false)   -- hangs from the front-left edge
   local Wr = M.transform(img, "ur", false)   -- hangs from the front-right edge
@@ -514,10 +477,8 @@ do
     cv:getPixel(X + S + 1, Y + S - 1) ~= T and      -- ...and right: caps the 4px wall flat
     count == 288 + 256 + 256,
     count .. " pixels")
-  local spr = Sprite(36, 36)
-  spr.layers[1]:cel(1).image = cv
-  spr.layers[1]:cel(1).position = Point(0, 0)
-  spr:saveAs("/Users/valeria/git/aseprite-plugins/isometrify/docs/example_cube.png")
+  local spr = cel_sprite(cv, 0, 0, 36, 36)
+  spr:saveAs(DOCS .. "/example_cube.png")
   report("example PNG rendered (cube)", spr.width == 36 and spr.height == 36)
 end
 

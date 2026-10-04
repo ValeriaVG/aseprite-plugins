@@ -1,58 +1,15 @@
 -- Isometrify: project a flat pixel-art selection onto the planes of a
--- 2:1 isometric scene.
---
--- Walls -- the math: an isometric wall is a pure vertical shear of
--- flat art.
---   * Vertical lines stay vertical.
---   * Horizontal lines become the classic 2:1 staircase (two across,
---     one down), because pixel column x slides down by floor(x/2)
---     (front wall) or floor((w-1-x)/2) (left wall).
---   * Every pixel lands on exactly one pixel: nothing is scaled,
---     duplicated or dropped, and the transform is exactly reversible.
---
--- This is what an artist does by hand: select the rightmost 2-pixel
--- strip and nudge it down 1; then the rightmost 4, down 1; then 6, 8...
--- Every pass pushes all earlier strips one row further down, so strip
--- pair i (counted from the left edge) ends up exactly i rows lower --
--- i.e. column x is down floor(x/2). The plugin runs every pass in one
--- click.
---
--- The commands are one-click by design: *Edit > Isometrify*,
--- *Edit > Isometrify Left Wall* and *Edit > Isometrify Floor*
--- transform the current selection (or the whole active cel)
--- immediately, no dialog, no settings. Only the pixels inside take
--- part: the region is trimmed to them first, so the staircase is
--- counted from the drawing's own edges and empty margin around it
--- (inside a bigger selection) is left alone. Bind the commands to
--- keyboard shortcuts via Edit > Keyboard Shortcuts (search
--- "Isometrify").
---
--- Three commands cover every plane a 2:1 isometric scene has:
---   * "dr"    the front wall: horizontals become "\" staircases;
---   * "ur"    the left wall: the same shear mirrored, so horizontals
---             become "/" staircases. The other two walls of a room
---             are these same two orientations (a mirrored wall is just
---             a flipped drawing);
---   * "floor" the floor (a ceiling is the same plane). The projection
---             (u, v) -> (u - v, (u + v)/2) moves every texture pixel to
---             exactly one output pixel. The diamond is rasterized with
---             full coverage -- solid outline, 2-pixel-wide tips -- and
---             spans w + h pixels, exactly the width of the two walls
---             side by side, so an isometrified square assembles into
---             a cube with matching proportions. The solid outline
---             costs one repeated pixel per row edge (a 16x16 floor is
---             256 moved pixels + 32 outline copies). Texture pixels
---             with odd u + v fall between rows and are dealt out to
---             balance the diamond (at most one pixel of adjustment
---             each). The diamond does not remember the original
---             aspect, so there is no reverse.
+-- 2:1 isometric scene -- front wall, left wall, floor -- with one-click
+-- Edit menu commands (no dialog, no settings). The user-facing story
+-- (what each command does, the hand technique it automates, how the
+-- three planes assemble into a cube) lives in README.md; the math is
+-- documented next to the code that implements it.
 --
 -- Aseprite loads this file as a plugin (package.json points at it via
 -- "contributes.scripts"): init(plugin) at the bottom registers the
--- commands. The transform functions also work as a plain library (the
--- test harness loads the file that way); reverse (un-shear) is kept
--- in the library for completeness and for the tests, but is not
--- exposed in the UI.
+-- commands. The file also works as a plain library (the test harness
+-- loads it that way); reverse (un-shear) is kept for the tests and is
+-- not exposed in the UI.
 
 local ISOMETRIFY = {}
 
@@ -70,8 +27,6 @@ local function new_image(like, w, h)
   -- fallback for color modes where resize is unavailable
   return Image(w, h, like.colorMode)
 end
-
-ISOMETRIFY.new_image = new_image
 
 -- ------------------------------------------------------------------- shear --
 
@@ -119,19 +74,18 @@ local function floor_forward(src)
   --   f_min..f_max  the whole row
   --   c_min..c_max  the slots the texture pixels themselves fill;
   --                 the fringe slots repeat the nearest placed pixel
+  -- Row r (0-based), in x = u - v coordinates: the full row is the
+  -- continuous diamond's row widened by one pixel per flank, the
+  -- texture slots are the diamond's row itself. Each edge is the
+  -- tightest of a few straight lines (tip, flat middle, base).
   local rows = {}
   local r = 0
   while true do
-    local lo, hi
-    if r + 1 <= h / 2 then lo = -2*r - 2
-    elseif r >= h / 2 then lo = 2*r - 2*h
-    else lo = -h end
-    if r + 1 <= w / 2 then hi = 2*r + 2
-    elseif r >= w / 2 then hi = 2*w - 2*r
-    else hi = w end
-    if lo > hi - 1 then break end
+    local f_min = math.max(-2*r - 2, 2*r - 2*h, -h)
+    local f_max = math.min( 2*r + 1, 2*w - 2*r - 1, w - 1)
+    if f_min > f_max then break end
     rows[#rows + 1] = {
-      f_min = lo, f_max = hi - 1,
+      f_min = f_min, f_max = f_max,
       c_min = math.max(-2*r - 1, 2*r + 1 - 2*h),
       c_max = math.min(2*r, 2*w - 2*r - 2),
       list = {}, placed = {},
@@ -199,22 +153,25 @@ local function floor_forward(src)
         row.placed[t.x] = t
       end
     end
-    if row.f_min < x_lo then x_lo = row.f_min end
-    if row.f_max > x_hi then x_hi = row.f_max end
+    x_lo = math.min(x_lo, row.f_min)
+    x_hi = math.max(x_hi, row.f_max)
   end
 
-  -- the nearest placed pixel, for an outline slot (same row first)
+  -- the nearest placed pixel, for an empty slot: within a row the
+  -- placed pixels fill c_min.. contiguously, so the nearest one in
+  -- that row is the closest point of that span. Ties prefer the same
+  -- row, then the left side (the row above, by scan order, on a full
+  -- tie).
   local function nearest(i, x)
     local best, bd, br, bx = nil, math.huge, math.huge, math.huge
     for dr = -1, 1 do
       local row = rows[i + dr]
-      if row ~= nil then
-        for px, t in pairs(row.placed) do
-          local d = math.abs(px - x) + math.abs(dr)
-          if d < bd or (d == bd and (math.abs(dr) < br
-                    or (math.abs(dr) == br and px - x < bx))) then
-            best, bd, br, bx = t, d, math.abs(dr), px - x
-          end
+      if row ~= nil and #row.list > 0 then
+        local px = math.min(math.max(x, row.c_min), row.c_min + #row.list - 1)
+        local d = math.abs(px - x) + math.abs(dr)
+        if d < bd or (d == bd and (math.abs(dr) < br
+                  or (math.abs(dr) == br and px - x < bx))) then
+          best, bd, br, bx = row.placed[px], d, math.abs(dr), px - x
         end
       end
     end
@@ -290,12 +247,12 @@ local function hull(a, b)
 end
 
 local function selection_bounds(sprite)
-  local ok, sel = pcall(function() return sprite.selection end)
-  if not ok or sel == nil then return nil end
-  local ok2, empty = pcall(function() return sel.isEmpty end)
-  if ok2 and empty then return nil end
-  local ok3, b = pcall(function() return sel.bounds end)
-  if not ok3 or b == nil or b.width <= 0 or b.height <= 0 then return nil end
+  local ok, b = pcall(function()
+    local sel = sprite.selection
+    if sel == nil or sel.isEmpty then return nil end
+    return sel.bounds
+  end)
+  if not ok or b == nil or b.width <= 0 or b.height <= 0 then return nil end
   return b
 end
 
@@ -316,7 +273,7 @@ local function content_bounds(img, cb, r)
         if x0 == nil or x < x0 then x0 = x end
         if x1 == nil or x > x1 then x1 = x end
         if y0 == nil or y < y0 then y0 = y end
-        y1 = y
+        if y1 == nil or y > y1 then y1 = y end
       end
     end
   end
@@ -335,8 +292,7 @@ end
 
 -- Project the selection (or the whole active cel) onto an isometric
 -- plane. The working region is first trimmed to the pixels that are
--- really there, so the staircase is counted from the drawing's own
--- edge and empty margin around it is left alone.
+-- really there (see content_bounds).
 -- opts.direction: "dr" (front wall, default), "ur" (left wall) or
 -- "floor"; opts.reverse: boolean, walls only;
 -- opts.sprite/layer/frame/cel/region: optional overrides (used by tests).
@@ -379,9 +335,6 @@ function ISOMETRIFY.apply(opts)
     return false, "the selection does not overlap the active layer"
   end
 
-  -- Trim the region down to the pixels that are really there: empty
-  -- margin inside the selection is not shifted, not cleared, and does
-  -- not grow the result or the canvas.
   r = content_bounds(img, cb, r)
   if r == nil then
     return false, "the selection holds no pixels to transform"
@@ -397,10 +350,10 @@ function ISOMETRIFY.apply(opts)
   end
 
   local sheared = ISOMETRIFY.transform(src, direction, reverse)
-  local out = Rectangle(r.x, r.y, sheared.width, sheared.height)
+  local out_rect = Rectangle(r.x, r.y, sheared.width, sheared.height)
 
   -- compose: current cel image, minus the old region, plus the sheared copy
-  local u = hull(cb, out)
+  local u = hull(cb, out_rect)
   local nimg = new_image(img, u.width, u.height)
   local function blit(simg, sx, sy)
     local ok = pcall(function() nimg:drawImage(simg, Point(sx, sy)) end)
@@ -408,18 +361,17 @@ function ISOMETRIFY.apply(opts)
   end
   blit(img, cb.x - u.x, cb.y - u.y)
   nimg:clear(Rectangle(r.x - u.x, r.y - u.y, r.width, r.height))
-  blit(sheared, out.x - u.x, out.y - u.y)
+  blit(sheared, out_rect.x - u.x, out_rect.y - u.y)
 
   local ok, err = pcall(function()
     cel.image = nimg
     cel.position = Point(u.x, u.y)
 
-    -- grow the canvas if the result sticks out past the bottom/right edge
     if u.y + u.height > sprite.height then sprite.height = u.y + u.height end
     if u.x + u.width > sprite.width then sprite.width = u.x + u.width end
 
     -- keep the result selected so it can be nudged into place
-    sprite.selection = Selection(out)
+    sprite.selection = Selection(out_rect)
   end)
   if not ok then return false, tostring(err) end
 
@@ -429,44 +381,31 @@ end
 
 -- ----------------------------------------------------------------- plugin --
 
+-- The three menu commands, one per plane of a 2:1 isometric scene.
+-- "edit_transform" puts them in the Edit menu, right after the Shift
+-- submenu; registration order is the menu order.
+local COMMANDS = {
+  { id = "Isometrify",         title = "Isometrify",          direction = "dr"    },
+  { id = "IsometrifyLeftWall", title = "Isometrify Left Wall", direction = "ur"    },
+  { id = "IsometrifyFloor",    title = "Isometrify Floor",     direction = "floor" },
+}
+
 -- Called by Aseprite when the extension loads (plugin API v1.2.18+).
 function init(plugin)
-  plugin:newCommand{
-    id = "Isometrify",
-    title = "Isometrify",
-    group = "edit_transform",   -- Edit menu, right after the Shift submenu
-    onclick = function()
-      app.transaction(function()
-        local done, msg = ISOMETRIFY.apply({ direction = "dr" })
-        if not done then app.alert("Isometrify: " .. (msg or "failed")) end
-      end)
-    end,
-    onenabled = function() return app.activeSprite ~= nil end,
-  }
-  plugin:newCommand{
-    id = "IsometrifyLeftWall",
-    title = "Isometrify Left Wall",
-    group = "edit_transform",   -- flat, right after Isometrify
-    onclick = function()
-      app.transaction(function()
-        local done, msg = ISOMETRIFY.apply({ direction = "ur" })
-        if not done then app.alert("Isometrify Left Wall: " .. (msg or "failed")) end
-      end)
-    end,
-    onenabled = function() return app.activeSprite ~= nil end,
-  }
-  plugin:newCommand{
-    id = "IsometrifyFloor",
-    title = "Isometrify Floor",
-    group = "edit_transform",   -- flat, right after Isometrify Left Wall
-    onclick = function()
-      app.transaction(function()
-        local done, msg = ISOMETRIFY.apply({ direction = "floor" })
-        if not done then app.alert("Isometrify Floor: " .. (msg or "failed")) end
-      end)
-    end,
-    onenabled = function() return app.activeSprite ~= nil end,
-  }
+  for _, c in ipairs(COMMANDS) do
+    plugin:newCommand{
+      id = c.id,
+      title = c.title,
+      group = "edit_transform",
+      onclick = function()
+        app.transaction(function()
+          local done, msg = ISOMETRIFY.apply({ direction = c.direction })
+          if not done then app.alert(c.title .. ": " .. (msg or "failed")) end
+        end)
+      end,
+      onenabled = function() return app.activeSprite ~= nil end,
+    }
+  end
 end
 
 return ISOMETRIFY

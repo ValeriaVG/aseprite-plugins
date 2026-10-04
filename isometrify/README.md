@@ -136,7 +136,7 @@ outline is for). The test suite renders exactly this as
 
 ```sh
 cd test
-/path/to/aseprite -b -script test_isometrify.lua   # 42-check test suite
+/path/to/aseprite -b -script test_isometrify.lua   # 43-check test suite
 /path/to/aseprite -b -script probe.lua            # API capability probe
 ```
 
