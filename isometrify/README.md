@@ -23,6 +23,15 @@ And the three commands on one square assemble into a cube:
 while the vertical stripe stays perfectly vertical; on the floor both
 stripes become staircases and the drawing lies flat as a diamond.)
 
+## Install
+
+Download the built extension from
+[itch.io](https://valeriavg.itch.io/isometrify) and add it via
+_Edit > Preferences > Extensions > Add Extension_, or install from
+source — see
+[Installing a plugin](../README.md#installing-a-plugin) in the
+repository README.
+
 ## Usage
 
 No dialog, no settings. Select a portion of your drawing — or select
