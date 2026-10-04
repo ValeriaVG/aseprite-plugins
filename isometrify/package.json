@@ -1,8 +1,8 @@
 {
   "name": "isometrify",
   "displayName": "Isometrify",
-  "version": "0.2.0",
-  "description": "Project a flat pixel-art selection onto a 2:1 isometric wall with one click (lossless pixel shear).",
+  "version": "0.4.1",
+  "description": "Project a flat pixel-art selection onto 2:1 isometric walls and floors with one click (pure pixel moves; an isometrified square assembles into a cube).",
   "author": {
     "name": "valeria"
   },
