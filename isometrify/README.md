@@ -149,3 +149,9 @@ library also keeps `reverse` (un-shear) for the tests and future modes.
 ## Ideas for later
 
 - Multi-layer mode; mask-accurate (non-rectangular) regions.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The code was generated with AI assistance
+(GLM 5.3 via Ollama, driven by Zed Agent); see the
+[repository README](../README.md#ai-use) for details.

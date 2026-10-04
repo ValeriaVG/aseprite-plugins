@@ -4,7 +4,12 @@
   "version": "0.4.1",
   "description": "Project a flat pixel-art selection onto 2:1 isometric walls and floors with one click (pure pixel moves; an isometrified square assembles into a cube).",
   "author": {
-    "name": "valeria"
+    "name": "ValeriaVG",
+    "url": "https://github.com/ValeriaVG"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ValeriaVG/aseprite-plugins.git"
   },
   "license": "MIT",
   "categories": [
